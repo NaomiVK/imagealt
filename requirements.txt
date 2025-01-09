@@ -1,0 +1,5 @@
+requests
+streamlit
+pdf2image
+Pillow
+groq
