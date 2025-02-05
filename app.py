@@ -166,21 +166,24 @@ def get_csv_download_link():
     return f'<a href="data:file/csv;base64,{b64}" download="image_descriptions.csv">Download CSV</a>'
 
 
-def copy_button(key, text):
-    safe_text = f"'{text}'"
-    html_str = f'''
-    <button 
-        onclick="navigator.clipboard.writeText({safe_text}).then(() => {{
-            this.innerText='Copied!';
-            setTimeout(() => this.innerText='Copy {key}', 2000);
-        }})" 
-        style="background-color:#4CAF50;border:none;color:white;padding:10px 20px;
-               text-align:center;text-decoration:none;display:inline-block;font-size:16px;
-               margin:4px 2px;cursor:pointer;border-radius:4px;"
-    >
-        Copy {key}
-    </button>
-    '''
+def copy_button(text):
+    """Create a copy button using HTML/JavaScript via components.html"""
+    button_id = f"copy_btn_{hash(text)}"
+    html_str = f"""
+        <button id="{button_id}" onclick="copyText(this, `{text}`)" 
+            style="background-color:#4CAF50;border:none;color:white;padding:10px 20px;text-align:center;
+            text-decoration:none;display:inline-block;font-size:16px;margin:4px 2px;cursor:pointer;border-radius:4px;">
+            Copy Text
+        </button>
+        <script>
+        function copyText(btn, text) {{
+            navigator.clipboard.writeText(text).then(() => {{
+                btn.textContent = 'Copied!';
+                setTimeout(() => btn.textContent = 'Copy Text', 2000);
+            }});
+        }}
+        </script>
+    """
     components.html(html_str, height=50)
 
 
@@ -283,12 +286,12 @@ def main():
             with col1:
                 st.write("English Alt Text Description:")
                 st.write(file_data['data']['analysis'])
-                copy_button(f"Alt Text for {filename}", file_data['data']['analysis'])
+                copy_button(file_data['data']['analysis'])
             
             with col2:
                 st.write("Description Alternative Française:")
                 st.write(file_data['data']['french_analysis'])
-                copy_button(f"Alt Text (FR) for {filename}", file_data['data']['french_analysis'])
+                copy_button(file_data['data']['french_analysis'])
             
             write_to_csv(
                 filename,
