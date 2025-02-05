@@ -92,7 +92,33 @@ def get_vision_analysis(image, is_pdf=False):
         return f"Error getting analysis from Groq: {str(e)}"
 
 
-def write_to_csv(image_name, description, long_description=None):
+def translate_to_french(text: str) -> str:
+    """Translate text to French using Groq API"""
+    api_key = os.getenv('GROQ_API_KEY')
+    if not api_key:
+        st.error("GROQ_API_KEY not found in environment variables")
+        return ""
+
+    try:
+        client = Groq(api_key=api_key)
+        chat_completion = client.chat.completions.create(
+            messages=[
+                {"role": "system", "content": "You are a professional translator. Translate the following text from English to French. Provide ONLY the direct translation without any explanations, notes, or additional commentary. Maintain the same tone and style of the original text."},
+                {"role": "user", "content": text}
+            ],
+            model="mixtral-8x7b-32768",
+            temperature=0.3,
+            max_tokens=1024
+        )
+        translation = chat_completion.choices[0].message.content.strip()
+        return translation
+    except Exception as e:
+        st.error(f"Translation error: {str(e)}")
+        return ""
+
+def write_to_csv(image_name: str, description: str = None, long_description: str = None,
+                french_description: str = None, french_long_description: str = None):
+    """Write descriptions to CSV file with French translations"""
     file_exists = False
     try:
         with open('image_descriptions.csv', 'r', encoding='utf-8') as f:
@@ -100,14 +126,33 @@ def write_to_csv(image_name, description, long_description=None):
     except FileNotFoundError:
         pass
 
-    with open('image_descriptions.csv', 'a', newline='', encoding='utf-8') as file:
+    with open('image_descriptions.csv', mode='a', newline='', encoding='utf-8') as file:
         writer = csv.writer(file)
         if not file_exists:
-            writer.writerow(["Image filename", "image alt text", "PDF description"])
+            writer.writerow([
+                "Image filename",
+                "Image alt text (English)",
+                "Image alt text (French)",
+                "PDF description (English)",
+                "PDF description (French)"
+            ])
+        
         if long_description is not None:
-            writer.writerow([image_name, description, long_description])
+            writer.writerow([
+                image_name,
+                description or "",
+                french_description or "",
+                long_description,
+                french_long_description or ""
+            ])
         else:
-            writer.writerow([image_name, description])
+            writer.writerow([
+                image_name,
+                description or "",
+                french_description or "",
+                "",
+                ""
+            ])
 
 
 def get_csv_download_link():
@@ -141,7 +186,7 @@ def copy_button(key, text):
 
 def main():
     st.title("Image alt text")
-    st.write("Upload images or PDFs to create image alt text")
+    st.write("Upload images or PDFs to create image alt text with French translations")
 
     if 'processed_files' not in st.session_state:
         st.session_state.processed_files = []
@@ -173,22 +218,36 @@ def main():
                         for idx, img in enumerate(pdf_images):
                             status_container.info(f"Processing page {idx + 1} of {len(pdf_images)} for {file.name}")
                             long_desc = get_vision_analysis(img, is_pdf=True)
-                            pdf_data.append({'image': img, 'long_desc': long_desc})
+                            # Translate long description
+                            with st.spinner(f'Translating description for page {idx + 1}...'):
+                                french_long_desc = translate_to_french(long_desc)
+                            pdf_data.append({
+                                'image': img,
+                                'long_desc': long_desc,
+                                'french_long_desc': french_long_desc
+                            })
                         st.session_state.file_data[file.name] = {'type': 'pdf', 'data': pdf_data}
 
                     else:
                         image = Image.open(file)
-                        image = resize_image_if_needed(image, max_size=1024)  # Resize the image directly
+                        image = resize_image_if_needed(image, max_size=1024)
                         analysis = get_vision_analysis(image)
+                        # Translate image analysis
+                        with st.spinner('Translating description...'):
+                            french_analysis = translate_to_french(analysis)
                         st.session_state.file_data[file.name] = {
                             'type': 'image',
-                            'data': {'image': image, 'analysis': analysis}
+                            'data': {
+                                'image': image,
+                                'analysis': analysis,
+                                'french_analysis': french_analysis
+                            }
                         }
 
                     st.session_state.processed_files.append(file.name)
                     progress_bar.progress((i + 1) / total_files)
 
-            st.success("All files processed successfully!")
+            st.success("All files processed and translated successfully!")
 
     # Display results
     for filename in st.session_state.processed_files:
@@ -198,17 +257,45 @@ def main():
             for idx, page_data in enumerate(file_data['data']):
                 st.write(f"Page {idx + 1}:")
                 st.image(page_data['image'], caption=f"Page {idx + 1} from PDF")
-                st.write("Description:")
-                st.write(page_data['long_desc'])
-                write_to_csv(f"{filename}_page_{idx + 1}", None, page_data['long_desc'])
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.write("English Description:")
+                    st.write(page_data['long_desc'])
+                
+                with col2:
+                    st.write("Description Française:")
+                    st.write(page_data['french_long_desc'])
+                
+                write_to_csv(
+                    f"{filename}_page_{idx + 1}",
+                    None,
+                    page_data['long_desc'],
+                    None,
+                    page_data['french_long_desc']
+                )
                 st.divider()
         else:
             st.subheader(f"Image: {filename}")
             st.image(file_data['data']['image'], caption="Uploaded Image")
-            st.write("Alt Text Description:")
-            st.write(file_data['data']['analysis'])
-            copy_button(f"Alt Text for {filename}", file_data['data']['analysis'])
-            write_to_csv(filename, file_data['data']['analysis'])
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.write("English Alt Text Description:")
+                st.write(file_data['data']['analysis'])
+                copy_button(f"Alt Text for {filename}", file_data['data']['analysis'])
+            
+            with col2:
+                st.write("Description Alternative Française:")
+                st.write(file_data['data']['french_analysis'])
+                copy_button(f"Alt Text (FR) for {filename}", file_data['data']['french_analysis'])
+            
+            write_to_csv(
+                filename,
+                file_data['data']['analysis'],
+                None,
+                file_data['data']['french_analysis']
+            )
             st.divider()
 
     if st.session_state.processed_files:
