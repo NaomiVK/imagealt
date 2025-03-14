@@ -6,8 +6,8 @@ from pdf2image import convert_from_bytes
 import csv
 import streamlit.components.v1 as components
 import os
-from groq import Groq
 import json
+import requests
 
 
 def convert_pdf_to_images(pdf_bytes, max_image_size=1024):
@@ -37,12 +37,8 @@ def resize_image_if_needed(image, max_size):
 
 
 def get_vision_analysis(image, is_pdf=False):
-    # Retrieve your Groq API key from environment
-    api_key = os.getenv("GROQ_API_KEY")
-    if not api_key:
-        return "Error: No Groq API key found."
-
-    client = Groq(api_key=api_key)
+    # Get the selected vision model from session state
+    vision_model = st.session_state.vision_model
 
     # Convert the image to base64
     img_byte_arr = io.BytesIO()
@@ -61,10 +57,11 @@ def get_vision_analysis(image, is_pdf=False):
         max_tokens = 500
     else:
         prompt = (
-            "You are an advanced assistant that analyzes images. "
-            "Look at the image carefully (in base64) and provide a factual, concise description "
-            "of the main objects, scene, and context you observe. "
-            "Do not hallucinate details not present in the image. Keep the description under 20 words, and DO NOT truncate your response"
+            "Create a short, concise alt text for this image suitable for a website. "
+            "DO NOT start with phrases like 'The image depicts', 'The image shows', or similar. "
+            "Instead, directly describe the main subject in 15-20 words maximum. "
+            "Focus only on the key elements necessary for accessibility. "
+            "Use simple, direct language without unnecessary words."
         )
         max_tokens = 30  # Give a few more tokens to avoid truncation, while setting expectation
 
@@ -77,40 +74,69 @@ def get_vision_analysis(image, is_pdf=False):
             ]
         }
     ]
+    
+    # Use OpenRouter for vision analysis
+    api_key = os.getenv("OPENROUTER_API_KEY")
+    if not api_key:
+        return "Error: No OpenRouter API key found."
+
     try:
-        completion = client.chat.completions.create(
-            model="llama-3.2-90b-vision-preview",
-            messages=messages,
-            temperature=0.7,  # Lower temperature
-            max_tokens=max_tokens,
-            top_p=0.90,  
-            stream=False,
-            stop=None,
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        payload = {
+            "messages": messages,
+            "model": vision_model,
+            "temperature": 0.7,
+            "max_tokens": max_tokens,
+            "top_p": 0.90
+        }
+        
+        response = requests.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers=headers,
+            json=payload
         )
-        return completion.choices[0].message.content.strip()
+        response.raise_for_status()
+        
+        return response.json()["choices"][0]["message"]["content"].strip()
     except Exception as e:
-        return f"Error getting analysis from Groq: {str(e)}"
+        return f"Error getting analysis from OpenRouter: {str(e)}"
 
 
 def translate_to_french(text: str) -> str:
-    """Translate text to French using Groq API"""
-    api_key = os.getenv('GROQ_API_KEY')
+    """Translate text to French using OpenRouter API with mistralai/mixtral-8x7b-instruct model"""
+    api_key = os.getenv('OPENROUTER_API_KEY')
     if not api_key:
-        st.error("GROQ_API_KEY not found in environment variables")
+        st.error("OPENROUTER_API_KEY not found in environment variables")
         return ""
 
     try:
-        client = Groq(api_key=api_key)
-        chat_completion = client.chat.completions.create(
-            messages=[
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        payload = {
+            "messages": [
                 {"role": "system", "content": "You are a professional translator. Translate the following text from English to French. Provide ONLY the direct translation without any explanations, notes, or additional commentary. Maintain the same tone and style of the original text."},
                 {"role": "user", "content": text}
             ],
-            model="mixtral-8x7b-32768",
-            temperature=0.3,
-            max_tokens=1024
+            "model": "mistralai/mixtral-8x7b-instruct",
+            "temperature": 0.3,
+            "max_tokens": 1024
+        }
+        
+        response = requests.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers=headers,
+            json=payload
         )
-        translation = chat_completion.choices[0].message.content.strip()
+        response.raise_for_status()
+        
+        translation = response.json()["choices"][0]["message"]["content"].strip()
         return translation
     except Exception as e:
         st.error(f"Translation error: {str(e)}")
@@ -187,6 +213,11 @@ def copy_button(text):
     components.html(html_str, height=50)
 
 
+def reset_app_state():
+    """Reset the app state when model changes"""
+    st.session_state.processed_files = []
+    st.session_state.file_data = {}
+
 def main():
     st.title("Image alt text")
     st.write("Upload images or PDFs to create image alt text with French translations")
@@ -195,6 +226,34 @@ def main():
         st.session_state.processed_files = []
     if 'file_data' not in st.session_state:
         st.session_state.file_data = {}
+    if 'vision_model' not in st.session_state:
+        st.session_state.vision_model = "meta-llama/llama-3.2-11b-vision-instruct"
+    if 'previous_model' not in st.session_state:
+        st.session_state.previous_model = st.session_state.vision_model
+    
+    # Add option to choose vision model
+    vision_model = st.selectbox(
+        "Choose Vision Model:",
+        [
+            "meta-llama/llama-3.2-11b-vision-instruct",
+            "google/gemini-pro-vision",
+            "x-ai/grok-2-vision-1212"
+        ],
+        index=[
+            "meta-llama/llama-3.2-11b-vision-instruct",
+            "google/gemini-pro-vision",
+            "x-ai/grok-2-vision-1212"
+        ].index(st.session_state.vision_model)
+    )
+    
+    # Check if model has changed
+    if vision_model != st.session_state.previous_model:
+        reset_app_state()
+        st.session_state.vision_model = vision_model
+        st.session_state.previous_model = vision_model
+        st.info(f"Changed model to {vision_model}. App has been reset.")
+    else:
+        st.session_state.vision_model = vision_model
 
     uploaded_files = st.file_uploader(
         "Choose files",
