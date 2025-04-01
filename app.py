@@ -247,20 +247,22 @@ def reset_app_state():
     st.session_state.file_data = {}
 
 def main():
+    # Title and description at the top of the page
     st.title("Image alt text")
     st.write("Upload images or PDFs to create image alt text with French translations")
-if 'processed_files' not in st.session_state:
-    st.session_state.processed_files = []
-if 'file_data' not in st.session_state:
-    st.session_state.file_data = {}
+    
+    # Initialize session state
+    if 'processed_files' not in st.session_state:
+        st.session_state.processed_files = []
+    if 'file_data' not in st.session_state:
+        st.session_state.file_data = {}
 
-# Handle model migration from Grok to GPT-4 Vision
-if 'vision_model' not in st.session_state or st.session_state.vision_model in ["x-ai/grok-2-vision-1212", "meta-llama/llama-3.2-11b-vision-instruct"]:
-    st.session_state.vision_model = "openai/gpt-4-vision-preview"
+    # Handle model migration from Grok to GPT-4 Vision
+    if 'vision_model' not in st.session_state or st.session_state.vision_model in ["x-ai/grok-2-vision-1212", "meta-llama/llama-3.2-11b-vision-instruct"]:
+        st.session_state.vision_model = "openai/gpt-4-vision-preview"
 
-if 'previous_model' not in st.session_state:
-    st.session_state.previous_model = st.session_state.vision_model
-
+    if 'previous_model' not in st.session_state:
+        st.session_state.previous_model = st.session_state.vision_model
     
     # Add option to choose vision model
     vision_model = st.selectbox(
