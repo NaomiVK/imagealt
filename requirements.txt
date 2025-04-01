@@ -2,3 +2,4 @@ requests
 streamlit
 pdf2image
 Pillow
+langdetect

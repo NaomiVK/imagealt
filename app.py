@@ -8,6 +8,7 @@ import streamlit.components.v1 as components
 import os
 import json
 import requests
+from langdetect import detect
 
 
 def convert_pdf_to_images(pdf_bytes, max_image_size=1024):
@@ -89,9 +90,9 @@ def get_vision_analysis(image, is_pdf=False):
         payload = {
             "messages": messages,
             "model": vision_model,
-            "temperature": 0.7,
+            "temperature": 0.3,
             "max_tokens": max_tokens,
-            "top_p": 0.90
+            "top_p": 0.85
         }
         
         response = requests.post(
@@ -106,8 +107,34 @@ def get_vision_analysis(image, is_pdf=False):
         return f"Error getting analysis from OpenRouter: {str(e)}"
 
 
+def detect_language(text: str) -> str:
+    """Detect the language of the given text.
+    
+    Args:
+        text: The text to detect language for
+        
+    Returns:
+        The language code (e.g., 'en', 'fr')
+    """
+    try:
+        return detect(text)
+    except Exception as e:
+        st.error(f"Language detection error: {str(e)}")
+        return "en"  # Default to English if detection fails
+
+
 def translate_to_french(text: str) -> str:
-    """Translate text to French using OpenRouter API with mistralai/mixtral-8x7b-instruct model"""
+    """Translate text to French using OpenRouter API with mistralai/mixtral-8x7b-instruct model.
+    
+    Skip translation if the text is already in French.
+    """
+    # First detect the language
+    lang = detect_language(text)
+    
+    # If already French, return the original text
+    if lang == 'fr':
+        return text
+        
     api_key = os.getenv('OPENROUTER_API_KEY')
     if not api_key:
         st.error("OPENROUTER_API_KEY not found in environment variables")
@@ -126,7 +153,8 @@ def translate_to_french(text: str) -> str:
             ],
             "model": "mistralai/mixtral-8x7b-instruct",
             "temperature": 0.3,
-            "max_tokens": 1024
+            "max_tokens": 1024,
+            "top_p": 0.85
         }
         
         response = requests.post(
@@ -221,28 +249,31 @@ def reset_app_state():
 def main():
     st.title("Image alt text")
     st.write("Upload images or PDFs to create image alt text with French translations")
+if 'processed_files' not in st.session_state:
+    st.session_state.processed_files = []
+if 'file_data' not in st.session_state:
+    st.session_state.file_data = {}
 
-    if 'processed_files' not in st.session_state:
-        st.session_state.processed_files = []
-    if 'file_data' not in st.session_state:
-        st.session_state.file_data = {}
-    if 'vision_model' not in st.session_state:
-        st.session_state.vision_model = "meta-llama/llama-3.2-11b-vision-instruct"
-    if 'previous_model' not in st.session_state:
-        st.session_state.previous_model = st.session_state.vision_model
+# Handle model migration from Grok to GPT-4 Vision
+if 'vision_model' not in st.session_state or st.session_state.vision_model in ["x-ai/grok-2-vision-1212", "meta-llama/llama-3.2-11b-vision-instruct"]:
+    st.session_state.vision_model = "openai/gpt-4-vision-preview"
+
+if 'previous_model' not in st.session_state:
+    st.session_state.previous_model = st.session_state.vision_model
+
     
     # Add option to choose vision model
     vision_model = st.selectbox(
         "Choose Vision Model:",
         [
-            "meta-llama/llama-3.2-11b-vision-instruct",
+            "openai/gpt-4-vision-preview",
             "google/gemini-pro-vision",
-            "x-ai/grok-2-vision-1212"
+            "meta-llama/llama-3.2-11b-vision-instruct"
         ],
         index=[
-            "meta-llama/llama-3.2-11b-vision-instruct",
+            "openai/gpt-4-vision-preview",
             "google/gemini-pro-vision",
-            "x-ai/grok-2-vision-1212"
+            "meta-llama/llama-3.2-11b-vision-instruct"
         ].index(st.session_state.vision_model)
     )
     
@@ -280,13 +311,20 @@ def main():
                         for idx, img in enumerate(pdf_images):
                             status_container.info(f"Processing page {idx + 1} of {len(pdf_images)} for {file.name}")
                             long_desc = get_vision_analysis(img, is_pdf=True)
-                            # Translate long description
+                            
+                            # Detect language of the content
+                            lang = detect_language(long_desc)
+                            st.write(f"Detected language: {lang}")
+                            
+                            # Translate long description (will skip if already French)
                             with st.spinner(f'Translating description for page {idx + 1}...'):
                                 french_long_desc = translate_to_french(long_desc)
+                            
                             pdf_data.append({
                                 'image': img,
                                 'long_desc': long_desc,
-                                'french_long_desc': french_long_desc
+                                'french_long_desc': french_long_desc,
+                                'detected_language': lang
                             })
                         st.session_state.file_data[file.name] = {'type': 'pdf', 'data': pdf_data}
 
@@ -294,15 +332,22 @@ def main():
                         image = Image.open(file)
                         image = resize_image_if_needed(image, max_size=1024)
                         analysis = get_vision_analysis(image)
-                        # Translate image analysis
+                        
+                        # Detect language of the content
+                        lang = detect_language(analysis)
+                        st.write(f"Detected language: {lang}")
+                        
+                        # Translate image analysis (will skip if already French)
                         with st.spinner('Translating description...'):
                             french_analysis = translate_to_french(analysis)
+                            
                         st.session_state.file_data[file.name] = {
                             'type': 'image',
                             'data': {
                                 'image': image,
                                 'analysis': analysis,
-                                'french_analysis': french_analysis
+                                'french_analysis': french_analysis,
+                                'detected_language': lang
                             }
                         }
 
@@ -320,9 +365,12 @@ def main():
                 st.write(f"Page {idx + 1}:")
                 st.image(page_data['image'], caption=f"Page {idx + 1} from PDF")
                 
+                # Display detected language
+                st.write(f"Detected language: {page_data.get('detected_language', 'unknown')}")
+                
                 col1, col2 = st.columns(2)
                 with col1:
-                    st.write("English Description:")
+                    st.write("Original Description:")
                     st.write(page_data['long_desc'])
                 
                 with col2:
@@ -341,9 +389,12 @@ def main():
             st.subheader(f"Image: {filename}")
             st.image(file_data['data']['image'], caption="Uploaded Image")
             
+            # Display detected language
+            st.write(f"Detected language: {file_data['data'].get('detected_language', 'unknown')}")
+            
             col1, col2 = st.columns(2)
             with col1:
-                st.write("English Alt Text Description:")
+                st.write("Original Alt Text Description:")
                 st.write(file_data['data']['analysis'])
                 copy_button(file_data['data']['analysis'])
             
