@@ -258,7 +258,7 @@ def main():
         st.session_state.file_data = {}
 
     # Handle model migration
-    if 'vision_model' not in st.session_state:
+    if 'vision_model' not in st.session_state or st.session_state.vision_model == "openai/gpt-4-vision-preview":
         st.session_state.vision_model = "google/gemini-pro-vision"
 
     if 'previous_model' not in st.session_state:
@@ -270,13 +270,11 @@ def main():
         [
             "google/gemini-pro-vision",
             "x-ai/grok-2-vision-1212",
-            "openai/gpt-4-vision-preview",
             "meta-llama/llama-3.2-11b-vision-instruct"
         ],
         index=[
             "google/gemini-pro-vision",
             "x-ai/grok-2-vision-1212",
-            "openai/gpt-4-vision-preview",
             "meta-llama/llama-3.2-11b-vision-instruct"
         ].index(st.session_state.vision_model)
     )
