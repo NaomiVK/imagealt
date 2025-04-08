@@ -8,6 +8,7 @@ import streamlit.components.v1 as components
 import os
 import json
 import requests
+import re
 from langdetect import detect
 
 
@@ -148,13 +149,13 @@ def translate_to_french(text: str) -> str:
         
         payload = {
             "messages": [
-                {"role": "system", "content": "You are a professional translator. Translate the following text from English to French. Provide ONLY the direct translation without any explanations, notes, or additional commentary. Maintain the same tone and style of the original text."},
+                {"role": "system", "content": "You are a professional translator. Your task is to translate the following text from English to French. CRITICAL INSTRUCTION: You must provide ONLY the direct translation. DO NOT include any explanations, notes, disclaimers, or additional commentary of any kind. DO NOT include phrases like 'I am a translator' or 'Note:'. DO NOT wrap your response in quotes. Simply translate the text directly, maintaining the same tone and style of the original."},
                 {"role": "user", "content": text}
             ],
             "model": "mistralai/mixtral-8x7b-instruct",
-            "temperature": 0.3,
+            "temperature": 0.1,  # Lower temperature for more deterministic output
             "max_tokens": 1024,
-            "top_p": 0.85
+            "top_p": 0.9
         }
         
         response = requests.post(
@@ -163,8 +164,31 @@ def translate_to_french(text: str) -> str:
             json=payload
         )
         response.raise_for_status()
-        
         translation = response.json()["choices"][0]["message"]["content"].strip()
+        
+        # Post-process to remove any explanatory text
+        # Remove text in parentheses that might contain explanations
+        translation = re.sub(r'\([^)]*\)', '', translation)
+        
+        # Remove common explanatory phrases
+        explanatory_phrases = [
+            "Note:",
+            "I am a professional translator",
+            "I can assure you",
+            "This is a translation",
+            "Here is the translation",
+            "Translation:",
+            "Voici la traduction"
+        ]
+        
+        for phrase in explanatory_phrases:
+            if phrase.lower() in translation.lower():
+                # Find where the actual translation starts (after the explanatory text)
+                parts = re.split(phrase, translation, flags=re.IGNORECASE)
+                if len(parts) > 1:
+                    translation = parts[1].strip()
+        
+        return translation
         return translation
     except Exception as e:
         st.error(f"Translation error: {str(e)}")
@@ -269,12 +293,10 @@ def main():
         "Choose Vision Model:",
         [
             "google/gemini-pro-vision",
-            "x-ai/grok-2-vision-1212",
             "meta-llama/llama-3.2-11b-vision-instruct"
         ],
         index=[
             "google/gemini-pro-vision",
-            "x-ai/grok-2-vision-1212",
             "meta-llama/llama-3.2-11b-vision-instruct"
         ].index(st.session_state.vision_model)
     )
@@ -316,7 +338,6 @@ def main():
                             
                             # Detect language of the content
                             lang = detect_language(long_desc)
-                            st.write(f"Detected language: {lang}")
                             
                             # Translate long description (will skip if already French)
                             with st.spinner(f'Translating description for page {idx + 1}...'):
@@ -337,7 +358,6 @@ def main():
                         
                         # Detect language of the content
                         lang = detect_language(analysis)
-                        st.write(f"Detected language: {lang}")
                         
                         # Translate image analysis (will skip if already French)
                         with st.spinner('Translating description...'):
@@ -367,9 +387,6 @@ def main():
                 st.write(f"Page {idx + 1}:")
                 st.image(page_data['image'], caption=f"Page {idx + 1} from PDF")
                 
-                # Display detected language
-                st.write(f"Detected language: {page_data.get('detected_language', 'unknown')}")
-                
                 col1, col2 = st.columns(2)
                 with col1:
                     st.write("English Description:")
@@ -390,9 +407,6 @@ def main():
         else:
             st.subheader(f"Image: {filename}")
             st.image(file_data['data']['image'], caption="Uploaded Image")
-            
-            # Display detected language
-            st.write(f"Detected language: {file_data['data'].get('detected_language', 'unknown')}")
             
             col1, col2 = st.columns(2)
             with col1:
