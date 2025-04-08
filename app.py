@@ -372,7 +372,7 @@ def main():
                 
                 col1, col2 = st.columns(2)
                 with col1:
-                    st.write("Original Description:")
+                    st.write("English Description:")
                     st.write(page_data['long_desc'])
                 
                 with col2:
@@ -396,7 +396,7 @@ def main():
             
             col1, col2 = st.columns(2)
             with col1:
-                st.write("Original Alt Text Description:")
+                st.write(English Alt Text Description:")
                 st.write(file_data['data']['analysis'])
                 copy_button(file_data['data']['analysis'])
             
