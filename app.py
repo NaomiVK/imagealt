@@ -272,8 +272,8 @@ def reset_app_state():
 
 def main():
     # Title and description at the top of the page
-    st.title("Image alt text")
-    st.write("Upload images or PDFs to create image alt text with French translations")
+    st.title("Image alt text for accessibility")
+    st.write("Upload images or PDFs to create image alt text with French translations for use on Canada.ca")
     
     # Initialize session state
     if 'processed_files' not in st.session_state:
