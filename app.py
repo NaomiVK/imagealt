@@ -55,7 +55,16 @@ def get_vision_analysis(image, is_pdf=False):
 
     # Construct prompt & tokens
     if is_pdf:
-        prompt = "Provide a thorough description of the text content in this page. Be concise and don't truncate your response"
+        if vision_model == "qwen/qwen2.5-vl-32b-instruct:free":
+            prompt = (
+                "Provide a thorough description of the MAIN CONTENT of this page ONLY. "
+                "IMPORTANT: EXCLUDE all headers and footers from your description. "
+                "Focus exclusively on the main body content of the page. "
+                "Do not describe any navigation elements, page numbers, logos, or other header/footer elements. "
+                "Be concise and don't truncate your response."
+            )
+        else:
+            prompt = "Provide a thorough description of the text content in this page. Be concise and don't truncate your response"
         max_tokens = 500
     else:
         prompt = (
@@ -67,15 +76,52 @@ def get_vision_analysis(image, is_pdf=False):
         )
         max_tokens = 30  # Give a few more tokens to avoid truncation, while setting expectation
 
-    messages = [
-        {
-            "role": "user",
-            "content": [
-                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_base64}"}},
-                {"type": "text", "text": prompt}
+    # Format messages based on the selected model
+    if vision_model == "openai/gpt-4o-mini":
+        # OpenAI requires a specific format for images
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_base64}"}}
+                ]
+            }
+        ]
+    elif vision_model == "qwen/qwen2.5-vl-32b-instruct:free":
+        # Qwen requires a different format
+        # For PDFs, we need to use the same format as OpenAI to ensure compatibility
+        if is_pdf:
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_base64}"}}
+                    ]
+                }
             ]
-        }
-    ]
+        else:
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image", "image_url": {"url": f"data:image/png;base64,{img_base64}"}}
+                    ]
+                }
+            ]
+    else:
+        # Default format for other models
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_base64}"}},
+                    {"type": "text", "text": prompt}
+                ]
+            }
+        ]
     
     # Use OpenRouter for vision analysis
     api_key = os.getenv("OPENROUTER_API_KEY")
@@ -85,7 +131,9 @@ def get_vision_analysis(image, is_pdf=False):
     try:
         headers = {
             "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://imagealt.streamlit.app",  # Add referer for API tracking
+            "X-Title": "Image Alt Text Generator"  # Add title for API tracking
         }
         
         payload = {
@@ -96,11 +144,37 @@ def get_vision_analysis(image, is_pdf=False):
             "top_p": 0.85
         }
         
+        # Debug the payload
+        st.session_state.last_payload = payload
+        
         response = requests.post(
             "https://openrouter.ai/api/v1/chat/completions",
             headers=headers,
             json=payload
         )
+        
+        # Store the response for debugging
+        if 'last_api_response' not in st.session_state:
+            st.session_state.last_api_response = {}
+            
+        try:
+            st.session_state.last_api_response = {
+                'status_code': response.status_code,
+                'headers': dict(response.headers),
+                'body': response.json() if response.status_code == 200 else response.text
+            }
+        except:
+            st.session_state.last_api_response = {
+                'status_code': response.status_code,
+                'headers': dict(response.headers),
+                'body': response.text
+            }
+        
+        # Debug the response
+        if response.status_code != 200:
+            st.error(f"API Error: {response.status_code} - {response.text}")
+            return f"Error: API returned status code {response.status_code}. Response: {response.text}"
+            
         response.raise_for_status()
         
         return response.json()["choices"][0]["message"]["content"].strip()
@@ -269,6 +343,9 @@ def reset_app_state():
     """Reset the app state when model changes"""
     st.session_state.processed_files = []
     st.session_state.file_data = {}
+    st.session_state.last_payload = None
+    if 'last_api_response' in st.session_state:
+        st.session_state.last_api_response = None
 
 def main():
     # Title and description at the top of the page
@@ -280,10 +357,14 @@ def main():
         st.session_state.processed_files = []
     if 'file_data' not in st.session_state:
         st.session_state.file_data = {}
+    if 'last_payload' not in st.session_state:
+        st.session_state.last_payload = None
+    if 'debug_mode' not in st.session_state:
+        st.session_state.debug_mode = False
 
     # Handle model migration
-    if 'vision_model' not in st.session_state or st.session_state.vision_model == "openai/gpt-4-vision-preview":
-        st.session_state.vision_model = "google/gemini-pro-vision"
+    if 'vision_model' not in st.session_state or st.session_state.vision_model == "openai/gpt-4-vision-preview" or st.session_state.vision_model == "google/gemini-pro-vision" or st.session_state.vision_model == "meta-llama/llama-3.2-11b-vision-instruct":
+        st.session_state.vision_model = "openai/gpt-4o-mini"
 
     if 'previous_model' not in st.session_state:
         st.session_state.previous_model = st.session_state.vision_model
@@ -292,12 +373,12 @@ def main():
     vision_model = st.selectbox(
         "Choose Vision Model:",
         [
-            "google/gemini-pro-vision",
-            "meta-llama/llama-3.2-11b-vision-instruct"
+            "openai/gpt-4o-mini",
+            "qwen/qwen2.5-vl-32b-instruct:free"
         ],
         index=[
-            "google/gemini-pro-vision",
-            "meta-llama/llama-3.2-11b-vision-instruct"
+            "openai/gpt-4o-mini",
+            "qwen/qwen2.5-vl-32b-instruct:free"
         ].index(st.session_state.vision_model)
     )
     
@@ -309,6 +390,33 @@ def main():
         st.info(f"Changed model to {vision_model}. App has been reset.")
     else:
         st.session_state.vision_model = vision_model
+        
+    # Add debug mode toggle
+    with st.expander("Advanced Settings"):
+        st.session_state.debug_mode = st.checkbox("Enable Debug Mode", value=st.session_state.debug_mode,
+                                                help="Show API payloads and responses for troubleshooting")
+        
+        if st.session_state.debug_mode:
+            if st.session_state.last_payload:
+                st.subheader("Last API Request")
+                st.json(st.session_state.last_payload)
+            
+            if 'last_api_response' in st.session_state and st.session_state.last_api_response:
+                st.subheader("Last API Response")
+                st.write(f"Status Code: {st.session_state.last_api_response.get('status_code')}")
+                
+                with st.expander("Response Headers"):
+                    st.json(st.session_state.last_api_response.get('headers', {}))
+                
+                with st.expander("Response Body"):
+                    st.json(st.session_state.last_api_response.get('body', {}))
+            
+            # Add a button to clear debug data
+            if st.button("Clear Debug Data"):
+                st.session_state.last_payload = None
+                if 'last_api_response' in st.session_state:
+                    st.session_state.last_api_response = None
+                st.experimental_rerun()
 
     uploaded_files = st.file_uploader(
         "Choose files",
